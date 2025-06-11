@@ -1,0 +1,1023 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Frozen Burrito Meal-Prep Planner</title>
+
+<!-- ============ BASIC GLOBAL STYLES ============ -->
+<style>
+:root{
+  --bg:#fafafa;--card:#ffffff;--border:#dadada;--text:#222;--accent:#0077cc;
+  --bg-d:#1e1e1e;--card-d:#272727;--border-d:#444;--text-d:#eee;
+}
+[data-theme=dark]{--bg:var(--bg-d);--card:var(--card-d);--border:var(--border-d);--text:var(--text-d);}
+*{box-sizing:border-box;font-family:system-ui,sans-serif;color:var(--text);}
+body{margin:0;background:var(--bg);padding-bottom:7rem}
+h1,h2{margin:.55rem 0;line-height:1.25}
+section{background:var(--card);border:1px solid var(--border);border-radius:6px;max-width:980px;margin:1rem auto;padding:1rem}
+.controls{display:flex;flex-wrap:wrap;gap:.65rem;margin-bottom:.9rem}
+.controls>*{flex:1 1 150px}
+input[type=number]{width:100%;padding:.35rem;border:1px solid var(--border);border-radius:4px}
+input[type=checkbox]{accent-color:var(--accent)}
+select,button{padding:.45rem .75rem;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer}
+.recipe-card{border:1px solid var(--border);border-radius:6px;margin:.65rem 0;overflow:hidden}
+.recipe-header{display:flex;align-items:center;gap:.65rem;padding:.65rem;background:var(--bg);cursor:pointer}
+.recipe-header img{width:50px;height:50px;object-fit:cover;border-radius:4px}
+.recipe-body{display:none;padding:1rem}.recipe-body.open{display:block}
+ul{margin:0 0 1rem 1.35rem;padding:0}
+.instructions{white-space:pre-line;font-size:.88rem;margin:.6rem 0}
+li.pantry{opacity:.4;text-decoration:line-through}
+  #shop > ul,
+  #shop > h4 + ul {
+    margin-left: 0 !important;
+    padding-left: 0 !important;
+    list-style-position: inside;
+  }
+#shop ul {
+  margin-left: 0 !important;
+  padding-left: 0 !important;
+}
+#shop ul li {
+  margin-left: 0 !important;
+  padding-left: 0 !important;
+}
+#timeline ol{margin:.65rem 0 0 1.35rem;padding:0}
+.step{display:flex;align-items:center;gap:.5rem;margin:.25rem 0;font-size:.9rem}
+.step.done{opacity:.45;text-decoration:line-through}
+.time-label{min-width:60px;font-weight:600}
+.timer-btn{margin-left:auto;font-size:.72rem}
+.toggle-btn{
+  border:none;
+  background:none;
+  cursor:pointer;
+  font-size:1rem;
+  transform:rotate(-90deg);          /* collapsed state */
+  transition:transform .15s;
+  margin-left:.25rem;
+}
+.recipe-body.open ~ .recipe-header .toggle-btn,
+.recipe-card.open .toggle-btn{
+  transform:rotate(0deg);            /* expanded state ▼ */
+}
+
+/* Timeline card look */
+.step {
+  border:1px solid var(--border);
+  border-radius:6px;
+  padding:.55rem .75rem;
+  margin:.4rem 0;
+  display:flex;
+  gap:.45rem;
+  align-items:flex-start;
+}
+.step.done { opacity:.45; text-decoration:line-through; }
+
+.step .meta  { flex:1 1 auto; }
+.step .meta small { display:block; font-size:.8em; color:#555; margin-top:.25rem; }
+.step .time-label { min-width:60px; font-weight:600; }
+
+#summary{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:2px solid var(--border);padding:.6rem .85rem;display:flex;gap:.85rem;flex-wrap:wrap;align-items:center;z-index:20}
+#summary div{font-size:.9rem}#summary button{margin-left:auto}
+@media print{#summary{display:none}}
+</style>
+</head>
+<body>
+<h1 style="text-align:center;margin-top:1rem">Frozen Burrito Meal Prep</h1>
+
+<!-- ========= CONTROLS ========= -->
+<section>
+ <h2>Recipes</h2>
+ <div class="controls">
+  <select id="sortSel">
+   <option value="rank">Sort by Rank</option>
+   <option value="taste">Taste ↑</option>
+   <option value="cost">$/Burrito ↑</option>
+  </select>
+  <select id="filterSel">
+   <option value="all">All tags</option>
+   <option value="highProtein">High-protein</option>
+   <option value="vegetarian">Vegetarian</option>
+  </select>
+  <input id="budgetInp" type="number" min="0" placeholder="Budget $" />
+  <button id="setBudget">Apply Budget</button>
+  <button id="clearBtn">Clear</button>
+ </div>
+ <div id="recipeWrap"></div>
+</section>
+
+<!-- ========= SHOPPING ========= -->
+<section>
+ <h2>Shopping List</h2>
+ <div id="shop"><p>Select recipes above →</p></div>
+</section>
+
+<!-- ========= TIMELINE ========= -->
+<section>
+ <h2>Smart Timeline</h2>
+ <div id="timeline"><p>Select ≥ 2 recipes to build an overlapped schedule.</p></div>
+</section>
+
+<!-- ========= SUMMARY BAR ========= -->
+<div id="summary">
+ <div id="sumCount">0 burritos</div>
+ <div id="sumCost">$0.00</div>
+ <div id="sumMacros">–– kcal | –– g P / burrito</div>
+ <button id="shareBtn">Share</button>
+ <button id="darkBtn">🌓</button>
+ <button id="bigTxt">A+</button>
+ <button id="smTxt">A-</button>
+</div>
+
+<!-- ============  SCRIPT PART 1/3: utilities, state, recipes  ============ -->
+<script>
+/* ======================  HELPERS  ====================== */
+const $ = q => document.querySelector(q);
+let fontPct = 100;
+const fmt$ = n => '$' + n.toFixed(2);
+const fmtT = m => {
+  const h = Math.floor(m/60);
+  const mm = String(m%60).padStart(2,'0');
+  return (h?`${h}h `:'')+mm+'m';
+};
+
+/* ======================  STATE  ====================== */
+const state = {
+  sel:    JSON.parse(localStorage.getItem('plan')   || '{}'),
+  pantry: JSON.parse(localStorage.getItem('pantry') || '{}'),
+  budget: 0
+};
+const save = () => {
+  localStorage.setItem('plan',   JSON.stringify(state.sel));
+  localStorage.setItem('pantry', JSON.stringify(state.pantry));
+};
+
+/* ======================  RECIPE DATA  ======================
+   All 13 recipes with full ingredients (weights) + explicit
+   step list + macro meta live below.  Each recipe object:
+   {
+     name, rank, taste, ease,
+     cost: {total, per, kcalPer, protPer},
+     yield, tags, hero,
+     ingredients: [ "... 480 g chicken ..." ],
+     instructions: "... multi-line ...",
+     steps: [ {txt,dur,passive}, ... ]
+   }
+----------------------------------------------------------- */
+const recipes = [
+/* Chicken Cheesy Rice */{
+ name:'Chicken Cheesy Rice',
+ rank:1,taste:4,ease:2,
+ cost:{total:36.01,per:2, kcalPer:321, protPer:25},
+ yield:18,tags:['highProtein'],
+ hero:'https://picsum.photos/seed/chickrice/100',
+ ingredients:[
+  '48 oz (1360 g) chicken thighs','2 taco seasoning packets',
+  '1 Tbsp (15 mL) lime juice','1 Tbsp (9 g) chicken bouillon',
+  '15 oz (425 g) green enchilada sauce','2 cloves garlic (6 g) minced',
+  '1 tsp (6 g) salt','2¼ cups (405 g) long-grain rice',
+  '4½ cups (1080 g) water','5 Roma tomatoes (625 g) diced',
+  '3 jalapeños (105 g) diced','2 white onions (400 g) diced',
+  '1 bunch cilantro (30 g) chopped','Juice of 2 limes (30 mL)',
+  '2 cups (450 g) Greek yogurt','1¼ cups (140 g) reduced-fat cheddar',
+  '1 cup (112 g) reduced-fat mozzarella','18 flour tortillas (1260 g)'
+ ],
+ instructions:`1  Add to slow-cooker: chicken, seasoning packets, lime juice, bouillon, enchilada sauce, garlic, salt. Cook LOW 3–4 h or HIGH 2–3 h.
+2  Rinse rice until water runs clear. Combine with 4½ c water, boil, cover, simmer 20 m, then rest 5 m.
+3  Dice tomatoes, jalapeños, onions; chop cilantro; squeeze limes.
+4  Shred cooked chicken. Fold in rice, vegetables, yogurt, cheddar, mozzarella.
+5  Portion ~4 oz filling on each tortilla, roll 18 burritos, cool and freeze.`,
+ steps:[
+  {
+    txt   : 'Slow-cook chicken mixture',
+    detail: 'Add to slow-cooker: 48 oz chicken thighs, 2 taco packets, 1 Tbsp lime juice, 1 Tbsp bouillon, 15 oz enchilada sauce, minced garlic & salt. Cook LOW 3–4 h / HIGH 2–3 h.',
+    mins  : 180, passive:true,device:'slow'
+  },
+  {
+    txt   : 'Cook rice',
+    detail: 'Rinse 2 ¼ c rice until clear, add 4 ½ c water, boil, cover, simmer 20 m, rest 5 m.',
+    mins  : 20
+  },
+  { txt:'Dice vegetables', detail:'Dice 5 tomatoes, 3 jalapeños, 2 onions; chop cilantro; juice 2 limes.', mins:15 },
+  { txt:'Combine filling', detail:'Shred chicken; fold in rice, vegetables, 2 c yogurt, cheddar & mozzarella.', mins:15 },
+  { txt:'Roll 18 burritos',detail:'Portion ~4 oz filling onto each of 18 tortillas; roll, cool, freeze.', mins:30 }
+]},
+/* Buffalo Chicken */
+{
+ name:'Buffalo Chicken',
+ rank:2,taste:4,ease:1,
+ cost:{total:35.30,per:2.52,kcalPer:358,protPer:29},
+ yield:14,tags:['highProtein'],
+ hero:'https://picsum.photos/seed/buff/100',
+ ingredients:[
+  '56 oz (1588 g) chicken thighs','1 ranch seasoning packet (28 g)',
+  '1 Tbsp (2 g) chopped dill','1 tsp (6 g) salt',
+  '1 tsp (3 g) garlic powder','1 tsp (3 g) onion powder',
+  '1 tsp (2 g) paprika','1 tsp (2 g) chili powder',
+  '100 g buffalo sauce (for crock-pot)',
+  '750 g blended low-fat cottage cheese',
+  '200 g ⅓-fat cream cheese','200 g buffalo sauce (for filling)',
+  '60 g honey','30 g melted butter',
+  '2 cups (224 g) shredded 2 % cheddar',
+  '¼ cup (15 g) chopped chives',
+  '14 flour tortillas (980 g)'
+ ],
+ instructions:`1  Place thighs, ranch packet, dill, dry spices & 100 g buffalo sauce in slow-cooker.  HIGH 2–3 h / LOW 3–4 h.
+2  Blend cottage cheese, cream cheese, 200 g buffalo sauce, honey & butter until smooth; refrigerate 1 h.
+3  Shred hot chicken; fold into chilled cheese mix with cheddar & chives.
+4  Fill each tortilla with ~5 oz (140 g) filling; roll 14 burritos.`,
+ steps:[
+  {
+    txt   :'Slow-cook buffalo chicken',
+    detail:'Place thighs, ranch packet, dill, dry spices & 100 g buffalo sauce in slow-cooker. HIGH 2–3 h / LOW 3–4 h.',
+    mins  :180, passive:true,device:'slow'
+  },
+  { txt:'Blend sauce base', detail:'Blend 750 g cottage, 200 g cream cheese, 200 g buffalo, 60 g honey, 30 g butter until smooth.', mins:15 },
+  { txt:'Chill sauce',      detail:'Refrigerate blended sauce 60 m to firm.', mins:60, passive:true },
+  { txt:'Combine filling',  detail:'Shred hot chicken; fold into chilled sauce with 2 c cheddar & chives.', mins:15 },
+  { txt:'Roll 14 burritos', detail:'Fill tortillas with ~5 oz mixture; roll tight.', mins:25 }
+]},
+
+/* Sweet Chili Chicken */
+{
+ name:'Sweet Chili Chicken',
+ rank:3,taste:6,ease:7,
+ cost:{total:22.17,per:2.22,kcalPer:312,protPer:26},
+ yield:10,tags:['highProtein'],
+ hero:'https://picsum.photos/seed/sweetchili/100',
+ ingredients:[
+  '48 oz (1360 g) chicken thighs','180 g sweet-chili sauce',
+  '90 g soy sauce','30 g rice vinegar','15 g sesame oil','2 g black pepper',
+  '240 g sushi rice','300 mL water','200 g Greek yogurt',
+  '30 g sriracha','4 g salt','3 g garlic powder',
+  '10 flour tortillas (700 g)'
+ ],
+ instructions:`1  Mix 180 g chili sauce, 90 g soy, 30 g vinegar, 15 g oil & pepper.  Marinate chicken 60 m refrigerated.
+2  Heat skillet med-high.  Sear chicken 5 m per side to 165 °F (74 °C); rest 5 m; slice.
+3  Rinse rice until clear; cook with 300 mL water – boil, cover, simmer 18 m; rest 10 m.
+4  Stir yogurt, sriracha, salt, garlic.
+5  Combine rice, chicken & sauce.  Portion ~155 g into each tortilla; roll 10 burritos.`,
+ steps:[
+  { txt:'Marinate chicken', detail:'Whisk 180 g chili sauce + 90 g soy + 30 g vinegar + 15 g oil + pepper; coat chicken; chill 60 m.', mins:60, passive:true },
+  { txt:'Sear chicken',     detail:'Sear marinated thighs 5 m per side to 165 °F; rest 5 m; slice.', mins:10 },
+  { txt:'Cook sushi rice',  detail:'Rinse 240 g rice; cook with 300 mL water—boil, cover, simmer 18 m; rest 10 m.', mins:20, passive:true },
+  { txt:'Mix spicy yogurt', detail:'Stir 200 g yogurt, 30 g sriracha, 1 tsp salt, 1 tsp garlic powder.', mins:5 },
+  { txt:'Roll 10 burritos', detail:'Combine rice & chicken; add sauce; portion ~155 g per tortilla; roll.', mins:20 }
+]},
+
+/* Tzatziki */
+{
+ name:'Tzatziki',
+ rank:4,taste:2,ease:6,
+ cost:{total:41.46,per:2.96,kcalPer:340,protPer:27},
+ yield:14,
+ hero:'https://picsum.photos/seed/tzatziki/100',
+ ingredients:[
+  '7 poblanos (525 g)','2 yellow onions (400 g)',
+  '1 Tbsp (15 mL) olive oil','½ tsp (3 g) salt','½ tsp (1 g) pepper',
+  '48 oz (1360 g) chicken breast','1 tsp (3 g) garlic powder',
+  '300 g tzatziki','300 g 0 % Greek yogurt',
+  '227 g Monterey Jack (shredded)','250 g pico de gallo',
+  '¼ cup (15 g) chopped cilantro','14 tortillas (980 g)'
+ ],
+ instructions:`1  Toss poblanos & onions with oil, salt, pepper; roast 400 °F 30 m, stir twice.
+2  Pound chicken ¾″.  Season garlic powder, salt, pepper.  Sear 2 m/side; transfer to veggie tray last 10 m of roast; cook to 165 °F.
+3  Dice chicken & veg; combine with tzatziki, yogurt, cheese, pico, cilantro.
+4  Fill 14 tortillas (~150 g) & roll.`,
+ steps:[
+  { txt:'Roast peppers & onions',detail:'Toss poblanos & onions with 1 Tbsp oil, salt, pepper; roast 400 °F 30 m, stirring twice.', mins:30, passive:true },
+  { txt:'Sear chicken',          detail:'Season chicken with garlic powder, salt, pepper; sear 2 m/side.', mins:4 },
+  { txt:'Finish chicken',        detail:'Move chicken onto veg tray for final 10 m; cook to 165 °F.', mins:10, passive:true },
+  { txt:'Mix creamy filling',    detail:'Dice chicken & veg; fold with 300 g tzatziki, 300 g yogurt, 227 g cheese, 250 g pico, cilantro.', mins:15 },
+  { txt:'Roll 14 burritos',      detail:'Fill tortillas (~150 g), roll tight.', mins:25 }
+]},
+
+/* Cheeseburger */
+{
+ name:'Cheeseburger',
+ rank:5,taste:3,ease:11,
+ cost:{total:32.39,per:2.31,kcalPer:379,protPer:28},
+ yield:14,tags:['highProtein'],
+ hero:'https://picsum.photos/seed/burger/100',
+ ingredients:[
+  '3 yellow onions (450 g) diced','16 oz (473 mL) beef bone broth',
+  '1 Tbsp (15 mL) soy sauce','48 oz (1360 g) 93 % lean ground beef',
+  '6 tsp (36 g) coarse salt','4 tsp (12 g) onion powder',
+  '4 tsp (12 g) garlic powder','4 tsp (9 g) black pepper',
+  '4 tsp (4 g) oregano','2 tsp (4 g) cumin',
+  '14.5 oz diced tomatoes (411 g)','3⅓ c (333 g) shredded cheddar',
+  '2 stalks (30 g) green onions','½ c (115 g) light mayo',
+  '½ c (120 g) Greek yogurt','⅓ c (90 g) sugar-free ketchup',
+  '4 tsp (20 g) sweet relish','14 tortillas (980 g)'
+ ],
+ instructions:`1  In deep skillet sweat onions 10 m; add broth 2 Tbsp at a time until 16 oz reduces & onions caramelize (~45 m).  Stir in soy at finish.
+2  Brown beef with dry spices & tomatoes; drain.
+3  Stir 3⅓ c cheddar, half caramelized onions, green onions into beef.
+4  Sauce: whisk mayo, yogurt, ketchup, relish, remaining onions; thin to drizzle.
+5  Spread 2 Tbsp sauce, add 4 oz beef mix per tortilla; roll 14 burritos.`,
+ steps:[
+  { txt:'Caramelize onions', detail:'Cook 3 diced onions with beef broth (adding as it reduces) & 1 Tbsp soy until deep brown (~45 m).', mins:45, passive:true },
+  { txt:'Brown seasoned beef',detail:'Cook 48 oz beef with salt, spices & tomatoes; drain fat.', mins:20 },
+  { txt:'Mix beef & cheese', detail:'Stir 3⅓ c cheddar + caramelized onions + green onions into beef.', mins:10 },
+  { txt:'Make burger sauce',detail:'Whisk mayo, yogurt, ketchup, relish, remaining onions; thin with water.', mins:10 },
+  { txt:'Roll 14 burritos',  detail:'Put 2 Tbsp sauce & 4 oz beef mix in each tortilla; roll.', mins:30 }
+]},
+
+/* EZ Breaky */
+{
+ name:'EZ Breaky',
+ rank:6,taste:9,ease:3,
+ cost:{total:23.10,per:2.31,kcalPer:300,protPer:26},
+ yield:10,
+ hero:'https://picsum.photos/seed/breaky/100',
+ ingredients:[
+  '10 slices center-cut bacon (225 g)','10 slices Canadian bacon (250 g)',
+  '90 g maple syrup','1 tsp (6 g) salt','1 tsp (3 g) garlic powder',
+  '½ tsp (1 g) thyme','600 g shredded potatoes','1 Tbsp (14 g) oil',
+  '450 g egg whites','4 eggs (200 g)','300 g cottage cheese',
+  '12 g corn starch','60 g shredded cheddar','10 tortillas (700 g)',
+  '400 g Greek yogurt','50 g hot sauce'
+ ],
+ instructions:`1  Arrange bacon on sheet; bake 400 °F 20 m.  Drain grease.
+2  Spread potatoes + oil; bake 400 °F 20 m.
+3  Chop bacons, mix syrup, salt, garlic, thyme; layer on potatoes.
+4  Blend egg whites, eggs, cottage cheese, starch.  Pour, top with cheddar; bake 400 °F 30 m.  Rest 10 m; cut 10 squares.
+5  Stir yogurt & hot sauce.  Wrap each square with sauce in tortilla; roll 10 burritos.`,
+ steps:[
+  { txt:'Bake bacon',           detail:'Arrange 10 slices center-cut + 10 slices Canadian on sheet; bake 400 °F 20 m; drain.', mins:20, passive:true },
+  { txt:'Bake hashbrowns',      detail:'Spread 600 g potatoes + 1 Tbsp oil; bake 400 °F 20 m.', mins:20, passive:true },
+  { txt:'Bake egg casserole',   detail:'Blend eggs, whites, cottage & starch; pour over bacon/hash; top cheddar; bake 400 °F 30 m; rest 10 m.', mins:30, passive:true },
+  { txt:'Slice & assemble',     detail:'Cut 10 squares; mix yogurt + hot sauce; wrap with tortilla.', mins:25 },
+]},
+
+/* file continues… */
+/***** Chorizo Breakfast *****/
+{
+ name:'Chorizo Breakfast',
+ rank:7,taste:5,ease:10,
+ cost:{total:26.49,per:1.89,kcalPer:332,protPer:28},
+ yield:14,
+ hero:'https://picsum.photos/seed/chorizo/100',
+ tags:['highProtein'],
+ ingredients:[
+  '10 guajillo chiles (60 g, stemmed/seeded)','4 pasilla chiles (25 g)',
+  '½ cup (120 g) hot soak water','2 Tbsp (14 g) paprika','1 Tbsp (3 g) oregano',
+  '2 tsp (4 g) cumin','2 Tbsp (36 g) kosher salt','1½ tsp (3 g) black pepper',
+  '5 garlic cloves (15 g)','½ cup (120 g) apple-cider vinegar',
+  '32 oz (908 g) 93 % lean ground beef','2 Tbsp (28 g) butter',
+  '800 g egg whites','400 g low-fat cheddar (shredded)',
+  '14 flour tortillas (980 g)'
+ ],
+ instructions:`1  Soak guajillo and pasilla chiles in boiling water 10 m; drain, keep ½ c soak water.
+2  Blend chiles, soak water, paprika, oregano, cumin, salt, pepper, garlic & vinegar until smooth.
+3  Mix sauce into 32 oz beef; cover & refrigerate 60 m.
+4  Heat cast-iron high; cook chorizo 6 m, stir, cook 4 m more (165 °F).
+5  Scramble 800 g egg whites in 2 Tbsp butter; melt in 400 g cheddar.
+6  Portion eggs & chorizo into 14 tortillas; roll tightly.`,
+ steps:[
+  { txt:'Blend chile sauce',  detail:'Soak chiles 10 m; blend with spices, garlic & vinegar.', mins:20 },
+  { txt:'Marinate beef',      detail:'Work sauce into 32 oz beef; refrigerate 60 m.', mins:60, passive:true },
+  { txt:'Cook chorizo',       detail:'Sear in hot skillet 6 m; stir; cook 4 m more to 165 °F.', mins:10 },
+  { txt:'Scramble cheesy eggs',detail:'Scramble 800 g egg whites in 2 Tbsp butter, melt in 400 g cheddar.', mins:15 },
+  { txt:'Roll 14 burritos',   detail:'Fill tortillas with chorizo + eggs; roll tight.', mins:25 }
+]},
+
+/***** Honey Teriyaki Chicken & Rice *****/
+{
+ name:'Honey Teriyaki',
+ rank:8,taste:11,ease:5,
+ cost:{total:21.10,per:1.76,kcalPer:318,protPer:26},
+ yield:16,
+ hero:'https://picsum.photos/seed/teriyaki/100',
+ ingredients:[
+  '48 oz (1360 g) chicken thighs','75 g soy sauce','30 g dark soy sauce',
+  '80 g honey','60 g mirin','30 g ginger paste','15 g garlic paste',
+  '3 Tbsp (24 g) corn starch','4 Tbsp (60 mL) cold water',
+  '480 g sushi rice','640 mL water','16 flour tortillas (1120 g)'
+ ],
+ instructions:`1  Whisk 75 g soy, 30 g dark soy, 80 g honey, 60 g mirin, 30 g ginger, 15 g garlic. Add chicken; slow-cook HIGH 5 h.
+2  Stir corn-starch slurry into cooker; simmer lid-off 15 m to thicken.
+3  Rinse 480 g rice; cook with 640 mL water – boil, cover, simmer 18 m; rest 10 m.
+4  Shred chicken in sauce; fold in rice. Fill 16 tortillas (~160 g) and roll.`,
+ steps:[
+  { txt:'Slow-cook teriyaki', detail:'Combine sauces, honey, ginger & garlic with chicken; HIGH 5 h / LOW 7 h.', mins:300, passive:true,device:'slow' },
+  { txt:'Thicken sauce',      detail:'Stir 3 Tbsp starch + 4 Tbsp water; simmer lid-off 15 m.', mins:15 },
+  { txt:'Cook sushi rice',    detail:'Rinse 480 g rice; cook with 640 mL water – boil, cover, simmer 18 m; rest 10 m.', mins:20, passive:true },
+  { txt:'Mix & roll 16',      detail:'Shred chicken in sauce; fold rice; fill 16 tortillas (~160 g).', mins:20 }
+]},
+
+/***** Chili Cheese *****/
+{
+ name:'Chili Cheese',
+ rank:9,taste:8,ease:9,
+ cost:{total:36.27,per:2.27,kcalPer:354,protPer:30},
+ yield:16,
+ hero:'https://picsum.photos/seed/chilicheese/100',
+ ingredients:[
+  '500 g sweet potatoes (cubed)','5 g avocado oil','1 tsp (2 g) chili powder',
+  '48 oz (1360 g) 93 % beef','2 taco-seasoning packets (56 g)',
+  '300 g cottage cheese','100 g American cheese','410 g fire-roasted tomatoes',
+  '200 g chipotle in adobo','2 Tbsp (16 g) corn starch','2 Tbsp (30 mL) water',
+  '½ cup (50 g) sliced green onions','150 g shredded cheddar',
+  '16 flour tortillas (1120 g)'
+ ],
+ instructions:`1  Toss potatoes with oil & chili powder; roast 425 °F 30 m, stir once.
+2  Brown beef with taco seasoning; drain excess fat.
+3  Blend cottage cheese, American cheese, tomatoes & chipotle until smooth.
+4  Stir sauce into beef; bring to simmer. Add corn-starch slurry; thicken 5 m.
+5  Fold in roasted potatoes, onions & 150 g cheddar. Spoon filling plus yogurt dollop into 16 tortillas; roll.`,
+ steps:[
+  { txt:'Roast potatoes',  detail:'Toss 500 g cubes with oil & chili powder; roast 425 °F 30 m.', mins:30, passive:true },
+  { txt:'Brown beef',      detail:'Cook 48 oz beef with taco packets; drain.', mins:20 },
+  { txt:'Blend cheese sauce',detail:'Blend cottage (300 g), American (100 g), tomatoes (410 g), chipotle (200 g).', mins:10, passive:true },
+  { txt:'Simmer & thicken',detail:'Combine beef + sauce; add starch slurry; cook 5 m.', mins:10 },
+  { txt:'Roll 16 burritos',detail:'Add potatoes, onions, cheddar; fill tortillas & roll.', mins:30 }
+]},
+/***** Cheese Steak *****/
+{
+ name:'Cheese Steak',
+ rank:10,taste:1,ease:12,
+ cost:{total:35.57,per:2.96,kcalPer:395,protPer:27},
+ yield:12,
+ hero:'https://picsum.photos/seed/cheesesteak/100',
+ ingredients:[
+  '3 red bell peppers (480 g) strips','3 poblano peppers (390 g) strips',
+  '4 jalapeños (140 g) sliced','1 yellow onion (250 g) sliced',
+  '1 Tbsp (15 mL) olive oil','1 Tbsp (8 g) minced garlic',
+  '½ tsp (3 g) salt','½ tsp (1 g) pepper',
+  '28 oz (794 g) skirt steak','1 cup (240 g) sour cream',
+  '⅓ block (76 g) cream cheese','⅔ cup (75 g) shredded mozzarella',
+  '⅓ cup (35 g) grated Parmesan','1 tsp (3 g) garlic powder',
+  '½ tsp (1 g) chili powder','½ tsp (1 g) black pepper',
+  '12 flour tortillas (840 g)'
+ ],
+ instructions:`1  Toss peppers, onion, jalapeños with oil, minced garlic, salt & pepper; roast 400 °F / 204 °C 40 m, stirring twice.
+2  Pat steak dry; sear in cast-iron 2 m per side (max heat). Rest 5 m; dice 1 cm.
+3  In bowl combine roasted veg, diced steak, sour cream, cream cheese, mozzarella, Parmesan, garlic & chili powders, black pepper.
+4  Divide ~5 oz (140 g) filling onto each tortilla; roll 12 cheesesteak burritos.`,
+ steps:[
+  { txt:'Roast veggies', detail:'Slice peppers & onion; toss with oil, garlic, salt, pepper; roast 400 °F 40 m, stir twice.', mins:40, passive:true },
+  { txt:'Sear steak',    detail:'Sear 28 oz skirt steak 2 m/side in cast-iron; rest 5 m.', mins:4 },
+  { txt:'Mix creamy filling',detail:'Dice steak; stir with roasted veg, sour cream, cream cheese, mozz, Parmesan & spices.', mins:15 },
+  { txt:'Roll 12 burritos',  detail:'Fill tortillas with ~140 g mix; roll tight.', mins:25 }
+]},
+
+/***** Creamy Chicken Fajita *****/
+{
+ name:'Creamy Chicken Fajita',
+ rank:11,taste:7,ease:8,
+ cost:{total:23.63,per:2.36,kcalPer:326,protPer:28},
+ yield:10,
+ hero:'https://picsum.photos/seed/fajita/100',
+ ingredients:[
+  '4 bell peppers (600 g) strips','1 sweet onion (250 g) strips',
+  '1 Tbsp (15 mL) avocado oil','32 oz (907 g) chicken breast',
+  '½ bunch cilantro (30 g) divided','Juice 1 lime (30 mL)',
+  '1 Tbsp (21 g) honey','1 Tbsp (9 g) garlic powder',
+  '1 tsp (3 g) chili powder','1 tsp (2 g) paprika',
+  '1 tsp (2 g) cumin','2 tsp (12 g) coarse salt','½ tsp (1 g) pepper',
+  '⅓ cup (80 mL) water','220 g Greek yogurt',
+  '1 Tbsp (15 mL) chipotle hot sauce','100 g shredded mozzarella',
+  '300 g refried ranchero beans','10 flour tortillas (700 g)'
+ ],
+ instructions:`1  Toss pepper & onion strips with oil; roast 450 °F / 232 °C 40 m, stirring every 12 m.
+2  Blend lime juice, honey, garlic powder, chili, paprika, cumin, salt, pepper + ⅓ c water. Coat chicken; marinate 30 m.
+3  Air-fry chicken 385 °F / 196 °C 5 m per side (10 m total) to 165 °F; chop bite-size.
+4  Combine chicken, roasted veg, 220 g yogurt, chipotle sauce, 100 g mozzarella, beans, chopped cilantro.
+5  Fill each tortilla with ~165 g mixture; roll 10 fajita burritos.`,
+ steps:[
+  { txt:'Roast peppers/onion',detail:'Toss strips with oil; roast 450 °F 40 m; stir twice.', mins:40, passive:true },
+  { txt:'Marinate chicken',   detail:'Blend lime, honey, spices, salt, pepper, water; coat chicken 30 m.', mins:30, passive:true },
+  { txt:'Air-fry chicken',    detail:'Cook 385 °F 5 m/side to 165 °F; chop.', mins:10 },
+  { txt:'Mix filling',        detail:'Combine chicken, veg, yogurt, chipotle sauce, mozzarella, beans, cilantro.', mins:15 },
+  { txt:'Roll 10 burritos',   detail:'Fill with ~165 g mix; roll.', mins:20 }
+]},
+
+/***** Beefy Queso *****/
+{
+ name:'Beefy Queso',
+ rank:12,taste:10,ease:7,
+ cost:{total:28.34,per:2.36,kcalPer:342,protPer:27},
+ yield:12,
+ hero:'https://picsum.photos/seed/queso/100',
+ ingredients:[
+  '32 oz (907 g) 96 % lean ground beef','3 tsp (18 g) coarse salt',
+  '2 tsp (6 g) onion powder','2 tsp (6 g) garlic powder',
+  '1 tsp (2 g) paprika','1 tsp (2 g) chili powder',
+  '200 g red enchilada sauce',
+  '1⅔ cup (400 g) Greek yogurt','¾ cup (115 g) pico de gallo',
+  '2⅓ cup (240 g) cheddar (shredded)','120 g canned green chiles',
+  '50 g nutritional yeast','40 g honey',
+  '1 bunch cilantro (20 g) chopped','15 g beef bouillon powder',
+  '12 flour tortillas (840 g)'
+ ],
+ instructions:`1  Brown beef with salt, powders & 200 g enchilada sauce. Drain excess fat.
+2  Off heat stir yogurt, pico, cheddar, green chiles, nutritional yeast, honey, bouillon & cilantro.
+3  Cover & refrigerate 15 m to thicken.
+4  Spread ~155 g filling per tortilla; roll 12 beefy-queso burritos.`,
+ steps:[
+  { txt:'Cook spiced beef',  detail:'Brown 32 oz beef with salt, powders & 200 g enchilada sauce; drain.', mins:20 },
+  { txt:'Stir queso mix',    detail:'Add yogurt, pico, cheddar, chiles, nutritional yeast, honey, bouillon, cilantro.', mins:10 },
+  { txt:'Chill mixture',     detail:'Cover & refrigerate 15 m so filling firms.', mins:15, passive:true },
+  { txt:'Roll 12 burritos',  detail:'Portion ~155 g filling per tortilla; roll tight.', mins:25 }
+]},
+
+/***** Chicken Cheesy Rolls *****/
+{
+ name:'Chicken Cheesy Rolls',
+ rank:13,taste:6,ease:4,
+ cost:{total:18.00,per:2.25,kcalPer:297,protPer:25},
+ yield:8,
+ hero:'https://picsum.photos/seed/cheesyroll/100',
+ ingredients:[
+  '20 oz (567 g) chicken breast','Juice 1 lime (30 mL)',
+  '1 taco-seasoning packet (28 g)',
+  '200 g cottage cheese','75 g Greek yogurt','4 Tbsp (60 g) salsa',
+  '2 Tbsp (30 g) red enchilada sauce','¼ tsp (1 g) garlic powder','¼ tsp (1 g) salt',
+  '4 Tbsp (60 g) pico de gallo',
+  '50 g reduced-fat cheese','50 g fat-free cheddar',
+  '8 low-carb tortillas (480 g)'
+ ],
+ instructions:`1  Coat chicken with lime juice & taco seasoning; air-fry 400 °F 15 m; shred.
+2  Blend cottage cheese, yogurt, salsa, enchilada sauce, garlic & salt until smooth.
+3  Fold in pico, cheeses, then shredded chicken.
+4  Spoon 140 g mixture into each low-carb tortilla; roll 8 burritos.`,
+ steps:[
+  { txt:'Air-fry chicken',    detail:'Coat 20 oz chicken with lime juice & taco seasoning; air-fry 400 °F 15 m; shred.', mins:15, passive:true },
+  { txt:'Blend queso sauce',  detail:'Blend 200 g cottage, 75 g yogurt, 4 Tbsp salsa, 2 Tbsp enchilada sauce, garlic & salt.', mins:10 },
+  { txt:'Mix filling',        detail:'Fold pico & cheeses into sauce; add shredded chicken.', mins:5 },
+  { txt:'Roll 8 burritos',    detail:'Fill low-carb tortillas with 140 g mixture; roll.', mins:20 }
+]}
+];  // <-- end of recipes array
+/* ============================================================
+   INGREDIENT MERGING  (weights + unit conversion)
+   ------------------------------------------------------------
+   1.  Converts oz → g (1 oz = 28.3495 g) and cups → g (≈240 g)
+   2.  Normalises names so “burrito-sized tortillas”, “low-carb
+       tortillas”, etc. merge into one key “tortillas”.
+   3.  Builds a <ul id="shopUl"> with summed quantities.
+============================================================ */
+const fracMap = {'¼':0.25,'½':0.5,'¾':0.75,'⅓':1/3,'⅔':2/3};
+const toNumber = token =>
+  fracMap[token] ?? (token.includes('/') ? token.split('/').reduce((a,b)=>a/b) : parseFloat(token));
+
+const oz2g  = g => g*28.3495;
+const cup2g = g => g*240;        // crude water-equivalent fallback
+
+function normalise (str) {
+  return str
+    /* remove leading explicit weight like “48 oz ” or “1360 g ” */
+    .replace(/^\d+(?:\.\d+)?\s*(?:oz|g|gram|grams|lb|lbs)\s+/i,'')
+    /* strip “juice of …” if present */
+    .replace(/^juice of\s+\d+\s+/i,'')
+    /* drop size / diet words */
+    .replace(/\b(low[-\s]?carb|burrito[-\s]?sized|large|medium|small)\b/ig,'')
+    /* remove bracketed notes */
+    .replace(/\(.*?\)/g,'')
+    /* squeeze spaces & lowercase */
+    .replace(/\s+/g,' ')
+    .toLowerCase()
+    .trim();
+}
+
+
+
+/* -----------------------------------------------------------
+   Parse an ingredient line
+   • If a parenthetical weight like “(450 g)” exists, keep it.
+   • Otherwise treat the first number+word as a COUNT item (unit="count").
+------------------------------------------------------------ */
+function parseLine (line) {
+
+  /* A. explicit weight in parentheses? */
+  const w = line.match(/\((\d+(?:\.\d+)?)\s*(g|oz)\)/i);
+  if (w) {
+    const qty  = parseFloat(w[1]);
+    const unit = w[2].toLowerCase();           // weight
+    const name = normalise(line.replace(/\(.*?\)/,''));
+    return { qty, unit, name, orig:line };
+  }
+
+  /* B. otherwise treat leading number as count */
+  const m = line.match(/^(\d+)\s+(.+)$/);       // simple count capture
+  if (m) {
+    const qty  = parseInt(m[1],10);
+    const name = normalise(m[2]);
+    return { qty, unit:'count', name, orig:line };
+  }
+
+  return null;  // cannot parse
+}
+
+
+
+
+
+
+
+function toGrams(qty,unit){
+  if(unit.startsWith('g'))  return qty;
+  if(unit.startsWith('oz')) return oz2g(qty);
+  if(unit.startsWith('cup'))return cup2g(qty);
+  if(unit.startsWith('tbsp'))return qty*15;
+  if(unit.startsWith('tsp')) return qty*5;
+  return qty;  // fallback → treat as grams
+}
+
+
+
+/* ============================================================
+   BUILD   SHOPPING LIST   v3
+   • Produce shows COUNT items (“3 yellow onions”)
+   • All other buckets sum by weight (g / oz)
+============================================================ */
+function buildShop () {
+
+  if (Object.keys(state.sel).length === 0) {
+    $('#shop').innerHTML = '<p>Select recipes above →</p>';
+    return;}
+  /* ---------- category regex map ---------- */
+  const catOrder = [
+    'Produce','Meats','Dairy & Eggs','Tortillas & Bakery',
+    'Grains, Rice & Dry Goods','Canned & Jarred Goods',
+    'Oils, Vinegars & Condiments','Spices & Seasonings','Misc / Freezer'
+  ];
+
+  const catRegex = {
+    'Produce' : /tomato|jalape(?:n|ñ)o?|pepper(?!.*powder)|onion(?!.*powder)|lime|cilantro|poblano|ginger|sweet potato|dill|chive/i,
+    'Meats'   : /chicken|beef|bacon|steak|chorizo|ground|thigh|breast|skirt/i,
+    'Dairy & Eggs' : /cheddar|mozz|monterey|cream cheese|cottage|yogurt|sour cream|egg|butter/i,
+    'Tortillas & Bakery' : /tortilla|wrap|bread/i,
+    'Grains, Rice & Dry Goods' : /rice|hashbrown|potato|flour|corn starch|yeast/i,
+    'Canned & Jarred Goods' : /enchilada|diced tomato|pico|chiles|beans|adobo|fire\.roasted/i,
+    'Oils, Vinegars & Condiments' : /oil|soy sauce|mirin|vinegar|honey|syrup|salsa|ketchup|relish|buffalo|hot sauce/i,
+    'Spices & Seasonings' : /powder|seasoning|packet|salt|cumin|paprika|oregano|pepper(?!\s*(corn|oni))/i
+  };
+
+  /* ---------- merge counts & weights ---------- */
+  const merged = {};      // key -> {qty,unit,name}
+
+  Object.keys(state.sel).forEach(idx => {
+    recipes[idx].ingredients.forEach(line => {
+      const p = parseLine(line);
+      if (!p) return;
+
+      const key = normalise(p.name);
+      const unit= p.unit;
+
+      if (!merged[key]) merged[key] = {qty:0,unit,name:key};
+
+      /* count items just add counts; weight items add grams */
+      merged[key].qty += (unit==='count') ? p.qty : toGrams(p.qty,unit);
+      if (unit==='count') merged[key].unit='count';
+    });
+  });
+
+  /* ---------- bucket by category ---------- */
+  const buckets = Object.fromEntries(catOrder.map(c=>[c,[]]));
+
+  Object.values(merged).forEach(item=>{
+    const cat = catOrder.find(c => catRegex[c]?.test(item.name)) || 'Misc / Freezer';
+    buckets[cat].push(item);
+  });
+
+  /* ---------- render ---------- */
+  let html = '';
+  catOrder.forEach(cat => {
+    if (!buckets[cat].length) return;
+    html += `<h4>${cat}</h4><ul>`;
+    buckets[cat].forEach(item => {
+  let label;
+  if (item.unit === 'count') {
+    label = `${item.qty} ${item.name}`;
+  } else {
+    const weight = item.qty >= 454
+        ? `${(item.qty/28.3495).toFixed(1)} oz`
+        : `${Math.round(item.qty)} g`;
+    label = `${item.name} (${weight})`;    // weight after name
+  }
+  const own = state.pantry[label];
+  html += `<li data-txt="${label}"${own?' class="pantry"':''}>
+             <label><input type="checkbox"${own?' checked':''}> ${label}</label>
+           </li>`;
+});
+
+  $('#shop').innerHTML = html || '<p>Select recipes above →</p>';
+})}
+
+
+
+
+/* ============================================================
+   USDA  FoodData Central  MACRO LOOK-UP  + cache
+============================================================ */
+const FDC_KEY = 'xHoUOQmfwsqvMtioDp27vrz3yWaicarMJsgUQmsW';   // your key
+async function fetchMacros(q){
+  const cacheKey = 'fdc_'+q.toLowerCase();
+  const c = localStorage.getItem(cacheKey);
+  if(c) return JSON.parse(c);
+
+  const url = `https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${FDC_KEY}&query=${encodeURIComponent(q)}&pageSize=1`;
+  const res = await fetch(url); const js = await res.json();
+  const hit = js.foods?.[0];
+  const kcal = hit?.foodNutrients?.find(n=>n.nutrientName==='Energy')?.value||0;
+  const prot = hit?.foodNutrients?.find(n=>n.nutrientName==='Protein')?.value||0;
+  const obj = {kcal,prot};
+  localStorage.setItem(cacheKey,JSON.stringify(obj));
+  return obj;
+}
+
+/* quick offline estimate fallback */
+const estMacro = n => ({kcal:n*350,prot:n*22});
+
+/* ...Part 6 will add summary/macro computation, timeline engine, UI events... */
+/* ============================================================
+   SUMMARY BAR  — totals + per-burrito macros
+============================================================ */
+function recalcSummary() {
+  let totalCost = 0, totalBurritos = 0, totalKcal = 0, totalProt = 0;
+
+  for (const idx in state.sel) {
+    const qty   = state.sel[idx];
+    const r     = recipes[idx];
+    totalCost   += qty * r.cost.per;
+    totalBurritos += qty;
+    totalKcal   += qty * r.cost.kcalPer;
+    totalProt   += qty * r.cost.protPer;
+  }
+
+  /* budget down-scaling */
+  if (state.budget && totalCost > state.budget) {
+    const f = state.budget / totalCost;
+    Object.keys(state.sel).forEach(i =>
+      state.sel[i] = Math.max(1, Math.floor(state.sel[i] * f))
+    );
+    return recalcSummary();              /* re-run with scaled */
+  }
+
+  $('#sumCost').textContent  = fmt$(totalCost);
+  $('#sumCount').textContent = totalBurritos + ' burritos';
+
+  const kcalPer = totalBurritos ? Math.round(totalKcal / totalBurritos) : 0;
+  const protPer = totalBurritos ? Math.round(totalProt / totalBurritos) : 0;
+  $('#sumMacros').textContent = `${kcalPer} kcal | ${protPer} g P / burrito`;
+
+  buildShop();
+  buildTimeline();
+  save();
+}
+
+
+
+/* ============================================================
+   SMART TIMELINE with single slow-cooker + txt+detail layout
+============================================================ */
+function buildTimeline () {
+  const ids  = Object.keys(state.sel);
+  const host = $('#timeline');
+
+  if (ids.length === 0) {
+    host.innerHTML = '<p>Select at least one recipe …</p>';
+    return;
+  }
+
+  /* init cursors + resource clocks */
+  const ptr = {}, ready = {}, deviceNext = { slow:0 };
+  ids.forEach(id => { ptr[id]=0; ready[id]=0; });
+
+  let clock = 0;
+  const events = [];
+  const done = () => ids.every(id => ptr[id]>=recipes[id].steps.length);
+
+  while (!done()) {
+
+    /* start every passive step that’s ready AND whose device is free */
+    ids.forEach(id => {
+      const rec = recipes[id];
+      if (ptr[id] < rec.steps.length && clock >= ready[id]) {
+        const s = rec.steps[ptr[id]];
+        if (s.passive) {
+          const dev = s.device || null;
+          if (dev && clock < deviceNext[dev]) return;  // device busy
+          events.push({start:clock,dur:s.mins,recipe:rec.name,
+                   txt:s.txt,detail:s.detail||s.txt});
+          ready[id] = clock + s.mins;
+          if (dev) deviceNext[dev] = clock + s.mins;   // lock cooker
+          ptr[id] += 1;
+        }
+      }
+    });
+
+    /* schedule first available ACTIVE task */
+    let job=null, jid=null;
+    for (const id of ids) {
+      const rec = recipes[id];
+      if (ptr[id] < rec.steps.length && clock >= ready[id]) {
+        const s = rec.steps[ptr[id]];
+        if (!s.passive) { job=s; jid=id; break; }
+      }
+    }
+    if (job) {
+      events.push({start:clock,dur:job.mins,recipe:recipes[jid].name,
+               txt:job.txt,detail:job.detail||job.txt});
+      clock       += job.mins;
+      ready[jid]   = clock;
+      ptr[jid]    += 1;
+      continue;
+    }
+
+    /* advance to next ready time (active or passive device) */
+    const nextTimes = [
+      ...ids.map(id => ready[id]),
+      ...Object.values(deviceNext)
+    ].filter(t=>t>clock);
+    clock = Math.min(...nextTimes);
+  }
+
+/* ---------- render ---------- */
+events.sort((a,b) => a.start - b.start);
+
+host.innerHTML =
+  '<ol style="list-style:none;padding:0;margin:0">' +
+  events.map(step => `
+    <li class="step">
+      <span class="time-label">${fmtT(step.start)}</span>
+
+      <div class="meta">
+        <strong>${step.recipe} — ${step.txt}</strong>
+        <small>${step.detail} (${step.dur} m)</small>
+      </div>
+
+      <button class="timer-btn" onclick="startTimer(this,${step.dur})">&#9654;</button>
+    </li>`).join('') +
+  '</ol>';
+ 
+}
+
+/* ============================================================
+   TOGGLE TIMER  (start ▸  pause ⏸  resume ▸  finish ✔)
+============================================================ */
+function startTimer (btn, mins) {
+
+  /* --- CASE A: timer is running → PAUSE (keep remaining sec) --- */
+  if (btn.dataset.tid) {
+    clearInterval(+btn.dataset.tid);
+    delete btn.dataset.tid;                 // remove running flag
+    btn.textContent = '▶';                 // resume glyph
+    return;
+  }
+
+  /* --- CASE B: start or resume --- */
+  let sec = btn.dataset.sec ? +btn.dataset.sec : mins * 60;
+  btn.textContent = '⏸';                   // now running
+
+  const lbl = btn.parentElement.querySelector('.time-label');
+  const tid = setInterval(() => {
+    sec--;
+    btn.dataset.sec = sec;                 // persist remaining time
+    const m = Math.floor(sec / 60);
+    const s = String(sec % 60).padStart(2,'0');
+    lbl.textContent = (m ? `${m}m:` : '0m:') + s;
+
+    if (sec <= 0) {
+      clearInterval(tid);
+      delete btn.dataset.tid;
+      delete btn.dataset.sec;
+      btn.textContent = '✔';
+      btn.parentElement.classList.add('done');
+    }
+  }, 1000);
+
+  btn.dataset.tid = tid;                   // mark as running
+}
+
+
+/* ============================================================
+   UI  EVENTS
+============================================================ */
+document.addEventListener('click', e => {
+  const card = e.target.closest('.recipe-card');
+
+  /* expand/collapse only via button */
+  if (e.target.classList.contains('toggle-btn')) {
+    const body  = card.querySelector('.recipe-body');
+    const head  = card.querySelector('.recipe-header');
+    body.classList.toggle('open');
+    card.classList.toggle('open');
+    head.classList.toggle('open');
+    return;                          // don’t fall through
+  }
+
+  /* recipe checkbox */
+  if (e.target.matches('.recipe-header input[type=checkbox]')) {
+    const id = +card.dataset.i;
+    e.target.checked ? state.sel[id] = recipes[id].yield
+                     : delete state.sel[id];
+    recalcSummary();
+  }
+
+  /* pantry checkbox */
+  if (e.target.matches('#shopUl input[type=checkbox]')) {
+    const txt = e.target.closest('li').dataset.txt;
+    if (e.target.checked) { state.pantry[txt] = 1; }
+    else { delete state.pantry[txt]; }
+    e.target.closest('li').classList.toggle('pantry', e.target.checked);
+    save();
+  }
+});
+
+document.addEventListener('input', e => {
+  if (e.target.matches('.recipe-body input[type=number]')) {
+    const id = +e.target.closest('.recipe-card').dataset.i;
+    const v  = +e.target.value;
+    v ? state.sel[id] = v : delete state.sel[id];
+    recalcSummary();
+  }
+});
+
+$('#sortSel').onchange   = renderCards;
+$('#filterSel').onchange = renderCards;
+$('#setBudget').onclick  = () => { state.budget = +$('#budgetInp').value || 0; recalcSummary(); };
+$('#clearBtn').onclick   = () => { state.sel = {}; state.pantry={}; state.budget=0; $('#budgetInp').value=''; recalcSummary(); };
+$('#shareBtn').onclick   = () => { location.hash = btoa(JSON.stringify(state.sel)); alert('URL ready!'); };
+
+$('#darkBtn').onclick = () =>
+  document.documentElement.dataset.theme =
+    document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+
+$('#bigTxt').onclick = () => {
+  fontPct = Math.min(fontPct+10, 150);
+  document.body.style.fontSize = fontPct + '%';
+};
+$('#smTxt').onclick = () => {
+  fontPct = Math.max(fontPct-10, 70);
+  document.body.style.fontSize = fontPct + '%';
+};
+
+/* ============================================================
+   INIT
+============================================================ */
+if (location.hash.length > 1) {
+  try { state.sel = JSON.parse(atob(location.hash.slice(1))); } catch {}
+}
+
+
+/* -----------------------------------------------------------
+   Render recipe cards   (arrow button toggles body)
+----------------------------------------------------------- */
+function renderCards () {
+
+  const sort = $('#sortSel').value;
+  const tag  = $('#filterSel').value;
+
+  /* pair each recipe with its original index */
+  let list = recipes.map((r, idx) => ({ r, idx }));
+  if (tag !== 'all') list = list.filter(o => (o.r.tags || []).includes(tag));
+
+  list.sort((a,b) =>
+    sort === 'taste' ? a.r.taste    - b.r.taste
+  : sort === 'cost'  ? a.r.cost.per - b.r.cost.per
+                     : a.r.rank     - b.r.rank );
+
+  let html = '';
+  list.forEach(obj => {
+    const r   = obj.r;
+    const idx = obj.idx;
+    const q   = state.sel[idx] || 0;
+
+    /* build ingredient <li> list */
+    const ingHTML = r.ingredients.map(li => '<li>' + li + '</li>').join('');
+
+    html += ''
+      + '<div class="recipe-card' + (q ? ' open' : '') + '" data-i="' + idx + '">'
+      +   '<div class="recipe-header' + (q ? ' open' : '') + '">'
+      +     '<input type="checkbox"' + (q ? ' checked' : '') + '>'
+      +     '<button class="toggle-btn" type="button">&#9654;</button>'
+      +     '<img src="' + r.hero + '" alt="">'
+      +     '<strong>' + r.name + '</strong>'
+      +     '<span style="margin-left:auto;font-size:.8rem">'
+      +        fmt$(r.cost.per) + ' / '
+      +        r.cost.kcalPer + ' kcal&nbsp;'
+      +        r.cost.protPer + ' g&nbsp;P'
+      +     '</span>'
+      +   '</div>'
+      +   '<div class="recipe-body' + (q ? ' open' : '') + '">'
+      +     '<label style="display:block;margin:.5rem 0;">'
+      +        'Qty <input type="number" min="0" value="' + (q || r.yield) + '">'
+      +     '</label>'
+      +     '<h4>Ingredients</h4>'
+      +     '<ul>' + ingHTML + '</ul>'
+      +     '<h4>Instructions</h4>'
+      +     '<div class="instructions">' + r.instructions + '</div>'
+      +   '</div>'
+      + '</div>';
+  });
+
+  $('#recipeWrap').innerHTML = html;
+}
+
+renderCards();
+recalcSummary();
+</script>
+</body>
+</html>
