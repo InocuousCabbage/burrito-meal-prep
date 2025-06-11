@@ -564,16 +564,30 @@ const toNumber = token =>
 const oz2g  = g => g*28.3495;
 const cup2g = g => g*240;        // crude water-equivalent fallback
 
+function normUnit(u){
+  u = u.toLowerCase();
+  if(/^(?:cups?|c)$/.test(u)) return 'cup';
+  if(/^(?:tbsp|tablespoons?)$/.test(u)) return 'tbsp';
+  if(/^(?:tsp|teaspoons?)$/.test(u)) return 'tsp';
+  return 'count';                     // treat everything else as a count
+}
+
+const fmtAlt = (q,u) =>
+  u==='count' ? Math.round(q) : `${parseFloat(q.toFixed(2))} ${u}`;
+
 function normalise (str) {
   return str
-    /* remove leading explicit weight like “48 oz ” or “1360 g ” */
+    /* remove bracketed notes */
+    .replace(/\(.*?\)/g,'')
+    /* remove explicit weight like “48 oz ” or “1360 g ” */
     .replace(/^\d+(?:\.\d+)?\s*(?:oz|g|gram|grams|lb|lbs)\s+/i,'')
     /* strip “juice of …” if present */
     .replace(/^juice of\s+\d+\s+/i,'')
+    /* drop leading counts + common unit words */
+    .replace(/^\d+[\d\s\/\.¼½¾⅓⅔]*\s*(?:tbsp|tablespoons?|tsp|teaspoons?|cups?|cup|bunch(?:es)?|clove(?:s)?|head(?:s)?|can(?:s)?|packet(?:s)?|stick(?:s)?|large|medium|small)?\b\s*/i,'')
+    .replace(/^\d+[\d\s\/\.¼½¾⅓⅔]*\s+/,'')
     /* drop size / diet words */
     .replace(/\b(low[-\s]?carb|burrito[-\s]?sized|large|medium|small)\b/ig,'')
-    /* remove bracketed notes */
-    .replace(/\(.*?\)/g,'')
     /* squeeze spaces & lowercase */
     .replace(/\s+/g,' ')
     .toLowerCase()
@@ -588,6 +602,7 @@ function normalise (str) {
    • Otherwise treat the first number+word as a COUNT item (unit="count").
 ------------------------------------------------------------ */
 
+ HEAD
   const produceRegex = /tomato|jalape(?:n|ñ)o?(?!.*powder)|pepper(?!.*powder)|onion(?!.*powder)|lime|cilantro|poblano|ginger|sweet potato|dill|chive/i;
 
 
@@ -616,6 +631,43 @@ function parseLine(line) {
     let unit    = vol[2].toLowerCase().replace(/s$/,'');
     const item  = normalise(vol[3]);
     return { qty: qtyRaw, unit, name: item, orig: line };
+  /* A. explicit weight in parentheses? */
+  const w = line.match(/\((\d+(?:\.\d+)?)\s*(g|oz|ml)\)/i);
+  if (w) {
+    const qty  = parseFloat(w[1]);
+    const unit = w[2].toLowerCase();
+
+    const before = line.slice(0, w.index).trim();
+    let name  = normalise(before);
+    let altQty, altUnit;
+
+    const parts = before.split(/\s+/);
+    if (/^[\d¼½¾⅓⅔]/.test(parts[0])) {
+      altQty = toNumber(parts[0]);
+      if (parts.length > 1 && /[a-z]/i.test(parts[1])) {
+        const u = normUnit(parts[1]);
+        if (u !== 'count') {
+          altUnit = u;
+          name = normalise(parts.slice(2).join(' '));
+        } else {
+          altUnit = 'count';
+          name = normalise(parts.slice(1).join(' '));
+        }
+      } else {
+        altUnit = 'count';
+        name = normalise(parts.slice(1).join(' '));
+      }
+    }
+
+    return { qty, unit, name, altQty, altUnit, orig:line };
+  }
+
+  /* B. otherwise treat leading number as count */
+  const m = line.match(/^([\d¼½¾⅓⅔]+)\s+(.+)$/);
+  if (m) {
+    const qty  = toNumber(m[1]);
+    const name = normalise(m[2]);
+    return { qty, unit:'count', name, orig:line };
   }
 
   // 4) GENERIC COUNT: any leading integer → treat as count
@@ -639,15 +691,16 @@ function parseLine(line) {
       return { qty: q, unit: 'count', name: itm, orig: line };
     }
   }
-
+  
   // cannot parse
   return null;
 }
-
+}
 
 function toGrams(qty,unit){
   if(unit.startsWith('g'))  return qty;
   if(unit.startsWith('oz')) return oz2g(qty);
+  if(unit.startsWith('ml')) return qty;        // assume density ~ water
   if(unit.startsWith('cup'))return cup2g(qty);
   if(unit.startsWith('tbsp'))return qty*15;
   if(unit.startsWith('tsp')) return qty*5;
@@ -670,6 +723,7 @@ function buildShop() {
     return;
   }
 
+  // 2. Merge & scale quantities
 
 
 
@@ -686,7 +740,12 @@ function buildShop() {
       const key = normalise(p.name);
       if (!merged[key]) merged[key] = {qty:0,unit:p.unit,name:key};
 
-      // COUNT items (produce, tortillas, slices, etc.)
+
+      if (p.altQty) {
+        merged[key].altQty  = (merged[key].altQty || 0) + p.altQty * factor;
+        merged[key].altUnit = p.altUnit || merged[key].altUnit;
+      }
+
       if (p.unit === 'count') {
         merged[key].qty  += p.qty * factor;
         merged[key].unit = 'count';
@@ -749,7 +808,8 @@ function buildShop() {
         const w = item.qty>=454
           ? `${(item.qty/28.3495).toFixed(1)} oz`
           : `${Math.round(item.qty)} g`;
-        label = `${item.name} (${w})`;
+        const prefix = item.altQty ? `${fmtAlt(item.altQty,item.altUnit)} ` : '';
+        label = `${prefix}${item.name} (${w})`;
       }
       const own = state.pantry[label];
       html += `<li data-txt="${label}"${own?' class="pantry"':''}>
