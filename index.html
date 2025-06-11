@@ -587,32 +587,62 @@ function normalise (str) {
    • If a parenthetical weight like “(450 g)” exists, keep it.
    • Otherwise treat the first number+word as a COUNT item (unit="count").
 ------------------------------------------------------------ */
-function parseLine (line) {
 
-  /* A. explicit weight in parentheses? */
+  const produceRegex = /tomato|jalape(?:n|ñ)o?(?!.*powder)|pepper(?!.*powder)|onion(?!.*powder)|lime|cilantro|poblano|ginger|sweet potato|dill|chive/i;
+
+
+
+
+function parseLine(line) {
+  // 1) Normalize name (for category matching)
+  const rawNoParens = line.replace(/\(.*?\)/g, '');
+  const name        = normalise(rawNoParens);
+
+  // 2) EXPLICIT WEIGHT: (450 g) or (16 oz)
   const w = line.match(/\((\d+(?:\.\d+)?)\s*(g|oz)\)/i);
   if (w) {
-    const qty  = parseFloat(w[1]);
-    const unit = w[2].toLowerCase();           // weight
-    const name = normalise(line.replace(/\(.*?\)/,''));
-    return { qty, unit, name, orig:line };
+    return {
+      qty : parseFloat(w[1]),
+      unit: w[2].toLowerCase(),
+      name,
+      orig: line
+    };
   }
 
-  /* B. otherwise treat leading number as count */
-  const m = line.match(/^(\d+)\s+(.+)$/);       // simple count capture
-  if (m) {
-    const qty  = parseInt(m[1],10);
-    const name = normalise(m[2]);
-    return { qty, unit:'count', name, orig:line };
+  // 3) VOLUME: e.g. “2¼ cups rice”, “3 Tbsp salsa”, “1 tsp garlic”
+  const vol = line.match(/^([\d\.\/¼½¾⅓⅔]+)\s*(cups?|tbsp|tbsps?|tsp|tsps?)\s+(.+)$/i);
+  if (vol) {
+    const qtyRaw = vol[1].split(/\s+/).map(toNumber).reduce((a,b)=>a+b,0);
+    let unit    = vol[2].toLowerCase().replace(/s$/,'');
+    const item  = normalise(vol[3]);
+    return { qty: qtyRaw, unit, name: item, orig: line };
   }
 
-  return null;  // cannot parse
+  // 4) GENERIC COUNT: any leading integer → treat as count
+  //    (catches “10 slices bacon”, “5 chicken breasts”, etc.)
+  const cnt = line.match(/^(\d+)\s+(.+)$/);
+  if (cnt) {
+    const item = normalise(cnt[2]);
+    return { qty: parseInt(cnt[1],10), unit: 'count', name: item, orig: line };
+  }
+
+  // 5) FALLBACK: number + unit → assume weight if unit is g/oz else count
+  const f = line.match(/^([\d\.\/¼½¾⅓⅔]+)\s*([a-zA-Z%]+)\s+(.+)$/);
+  if (f) {
+    const q   = f[1].split(/\s+/).map(toNumber).reduce((a,b)=>a+b,0);
+    const u   = f[2].toLowerCase();
+    const itm = normalise(f[3]);
+    if (u.startsWith('g') || u.startsWith('oz')) {
+      return { qty: q, unit: u, name: itm, orig: line };
+    } else {
+      // non-weight unit fallback to count
+      return { qty: q, unit: 'count', name: itm, orig: line };
+    }
+  }
+
+  // cannot parse
+  return null;
 }
-
-
-
-
-
 
 
 function toGrams(qty,unit){
@@ -629,86 +659,94 @@ function toGrams(qty,unit){
 /* ============================================================
    BUILD SHOPPING LIST  — scaled + categorized into nine buckets
 ============================================================ */
+/* ============================================================
+   BUILD SHOPPING LIST  — scaled + categorized into nine buckets
+============================================================ */
 function buildShop() {
-  // 1. If nothing selected → show placeholder and exit
-  const totalBurritos = Object.values(state.sel).reduce((sum, v) => sum + v, 0);
+  // 1. If nothing selected → placeholder and exit
+  const totalBurritos = Object.values(state.sel).reduce((s,v)=>s+v,0);
   if (totalBurritos === 0) {
     $('#shop').innerHTML = '<p>Select recipes above →</p>';
     return;
   }
 
-  // 2. Merge & scale quantities
-  const merged = {};  // key → { qty, unit, name }
 
-  Object.entries(state.sel).forEach(([idx, selected]) => {
-    if (!selected) return;
+
+
+  // 2. Merge & scale quantities (counts, volumes, and weights)
+  const merged = {};
+  Object.entries(state.sel).forEach(([idx,sel])=>{
+    if (!sel) return;
     const rec    = recipes[idx];
-    const factor = selected / rec.yield;
+    const factor = sel/rec.yield;
 
-    rec.ingredients.forEach(line => {
+    rec.ingredients.forEach(line=>{
       const p = parseLine(line);
       if (!p) return;
-
       const key = normalise(p.name);
-      if (!merged[key]) merged[key] = { qty: 0, unit: p.unit, name: key };
+      if (!merged[key]) merged[key] = {qty:0,unit:p.unit,name:key};
 
+      // COUNT items (produce, tortillas, slices, etc.)
       if (p.unit === 'count') {
-        // Round up produce counts
-        const count = Math.ceil(p.qty * factor);
-        merged[key].qty += count;
+        merged[key].qty  += p.qty * factor;
         merged[key].unit = 'count';
+
+      // VOLUME items (cups, Tbsp, tsp)
+      } else if (['cup','tbsp','tsp'].includes(p.unit)) {
+        merged[key].qty  += p.qty * factor;
+        merged[key].unit = p.unit;
+
+      // WEIGHT items (g, oz)
       } else {
-        // Scale weights and convert to grams
         const grams = toGrams(p.qty * factor, p.unit);
-        merged[key].qty += grams;
+        merged[key].qty  += grams;
         merged[key].unit = p.unit;
       }
     });
   });
 
-  // 3. Category definitions and bucketing
-  const catOrder = [
-    'Produce',
-    'Meats',
-    'Dairy & Eggs',
-    'Tortillas & Bakery',
-    'Grains, Rice & Dry Goods',
-    'Canned & Jarred Goods',
-    'Oils, Vinegars & Condiments',
-    'Spices & Seasonings',
-    'Misc / Freezer'
-  ];
 
+
+
+
+
+  // 3. Categorize into nine buckets
+  const catOrder = [
+    'Produce','Meats','Dairy & Eggs','Tortillas & Bakery',
+    'Grains, Rice & Dry Goods','Canned & Jarred Goods',
+    'Oils, Vinegars & Condiments','Spices & Seasonings','Misc / Freezer'
+  ];
   const catRegex = {
-    'Produce'                    : /tomato|jalape(?:n|ñ)o?(?!.*powder)|pepper(?!.*powder)|onion(?!.*powder)|lime|cilantro|poblano|ginger|sweet potato|dill|chive/i,
-    'Meats'                      : /chicken|beef|bacon|steak|chorizo|ground|thigh|breast|skirt/i,
-    'Dairy & Eggs'               : /cheddar|mozzarella|monterey|cream cheese|cottage|yogurt|sour cream|egg|butter/i,
-    'Tortillas & Bakery'         : /tortilla|wrap|bread/i,
-    'Grains, Rice & Dry Goods'   : /rice|hashbrown|potato|flour|corn starch|yeast/i,
-    'Canned & Jarred Goods'      : /enchilada|diced tomato|pico|chiles|beans|adobo|fire\.roasted/i,
+    Produce:                    /tomato|jalape(?:n|ñ)o?(?!.*powder)|pepper(?!.*powder)|onion(?!.*powder)|lime|cilantro|poblano|ginger|sweet potato|dill|chive/i,
+    Meats:                      /chicken|beef|bacon|steak|chorizo|ground|thigh|breast|skirt/i,
+    'Dairy & Eggs':             /cheddar|mozzarella|monterey|cream cheese|cottage|yogurt|sour cream|egg|butter/i,
+    'Tortillas & Bakery':       /tortilla|wrap|bread/i,
+    'Grains, Rice & Dry Goods': /rice|hashbrown|potato|flour|corn starch|yeast/i,
+    'Canned & Jarred Goods':    /enchilada|diced tomato|pico|chiles|beans|adobo|fire\.roasted/i,
     'Oils, Vinegars & Condiments': /oil|soy sauce|mirin|vinegar|honey|syrup|salsa|ketchup|relish|buffalo|hot sauce/i,
-    'Spices & Seasonings'        : /powder|seasoning|packet|salt|cumin|paprika|oregano|pepper(?!\s*(corn|oni))/i
-    // 'Misc / Freezer' is the catch-all
+    'Spices & Seasonings':      /powder|seasoning|packet|salt|cumin|paprika|oregano|pepper(?!\s*(corn|oni))/i
+    // Misc / Freezer is catch-all
+    
   };
 
-  const buckets = Object.fromEntries(catOrder.map(c => [c, []]));
-  Object.values(merged).forEach(item => {
-    const cat = catOrder.find(c => catRegex[c]?.test(item.name)) || 'Misc / Freezer';
+  const buckets = Object.fromEntries(catOrder.map(c=>[c,[]]));
+  Object.values(merged).forEach(item=>{
+    const cat = catOrder.find(c=>catRegex[c]?.test(item.name))||'Misc / Freezer';
     buckets[cat].push(item);
   });
 
-  // 4. Render the categorized list
+  // 4. Render each bucket
   let html = '';
-  catOrder.forEach(cat => {
+  catOrder.forEach(cat=>{
     const list = buckets[cat];
     if (!list.length) return;
     html += `<h4>${cat}</h4><ul>`;
-    list.forEach(item => {
+    list.forEach(item=>{
       let label;
-      if (item.unit === 'count') {
+      if (item.unit==='count') {
         label = `${item.qty} ${item.name}`;
       } else {
-        const w = item.qty >= 454
+        const w = item.qty>=454
           ? `${(item.qty/28.3495).toFixed(1)} oz`
           : `${Math.round(item.qty)} g`;
         label = `${item.name} (${w})`;
@@ -723,6 +761,7 @@ function buildShop() {
 
   $('#shop').innerHTML = html;
 }
+
 
 
 /* ============================================================
