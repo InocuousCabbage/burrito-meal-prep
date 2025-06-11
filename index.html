@@ -602,11 +602,8 @@ function normalise (str) {
    • Otherwise treat the first number+word as a COUNT item (unit="count").
 ------------------------------------------------------------ */
 
- HEAD
-  const produceRegex = /tomato|jalape(?:n|ñ)o?(?!.*powder)|pepper(?!.*powder)|onion(?!.*powder)|lime|cilantro|poblano|ginger|sweet potato|dill|chive/i;
-
-
-
+ 
+const produceRegex = /tomato|jalape(?:n|ñ)o?(?!.*powder)|pepper(?!.*powder)|onion(?!.*powder)|lime|cilantro|poblano|ginger|sweet potato|dill|chive/i;
 
 function parseLine(line) {
   // 1) Normalize name (for category matching)
