@@ -566,14 +566,17 @@ const cup2g = g => g*240;        // crude water-equivalent fallback
 
 function normalise (str) {
   return str
-    /* remove leading explicit weight like “48 oz ” or “1360 g ” */
+    /* remove bracketed notes */
+    .replace(/\(.*?\)/g,'')
+    /* remove explicit weight like “48 oz ” or “1360 g ” */
     .replace(/^\d+(?:\.\d+)?\s*(?:oz|g|gram|grams|lb|lbs)\s+/i,'')
     /* strip “juice of …” if present */
     .replace(/^juice of\s+\d+\s+/i,'')
+    /* drop leading counts + common unit words */
+    .replace(/^\d+[\d\s\/\.¼½¾⅓⅔]*\s*(?:tbsp|tablespoons?|tsp|teaspoons?|cups?|cup|bunch(?:es)?|clove(?:s)?|head(?:s)?|can(?:s)?|packet(?:s)?|stick(?:s)?|large|medium|small)?\b\s*/i,'')
+    .replace(/^\d+[\d\s\/\.¼½¾⅓⅔]*\s+/,'')
     /* drop size / diet words */
     .replace(/\b(low[-\s]?carb|burrito[-\s]?sized|large|medium|small)\b/ig,'')
-    /* remove bracketed notes */
-    .replace(/\(.*?\)/g,'')
     /* squeeze spaces & lowercase */
     .replace(/\s+/g,' ')
     .toLowerCase()
