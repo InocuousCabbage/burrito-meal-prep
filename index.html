@@ -564,6 +564,17 @@ const toNumber = token =>
 const oz2g  = g => g*28.3495;
 const cup2g = g => g*240;        // crude water-equivalent fallback
 
+function normUnit(u){
+  u = u.toLowerCase();
+  if(/^(?:cups?|c)$/.test(u)) return 'cup';
+  if(/^(?:tbsp|tablespoons?)$/.test(u)) return 'tbsp';
+  if(/^(?:tsp|teaspoons?)$/.test(u)) return 'tsp';
+  return 'count';                     // treat everything else as a count
+}
+
+const fmtAlt = (q,u) =>
+  u==='count' ? Math.round(q) : `${parseFloat(q.toFixed(2))} ${u}`;
+
 function normalise (str) {
   return str
     /* remove leading explicit weight like “48 oz ” or “1360 g ” */
@@ -590,18 +601,40 @@ function normalise (str) {
 function parseLine (line) {
 
   /* A. explicit weight in parentheses? */
-  const w = line.match(/\((\d+(?:\.\d+)?)\s*(g|oz)\)/i);
+  const w = line.match(/\((\d+(?:\.\d+)?)\s*(g|oz|ml)\)/i);
   if (w) {
     const qty  = parseFloat(w[1]);
-    const unit = w[2].toLowerCase();           // weight
-    const name = normalise(line.replace(/\(.*?\)/,''));
-    return { qty, unit, name, orig:line };
+    const unit = w[2].toLowerCase();
+
+    const before = line.slice(0, w.index).trim();
+    let name  = normalise(before);
+    let altQty, altUnit;
+
+    const parts = before.split(/\s+/);
+    if (/^[\d¼½¾⅓⅔]/.test(parts[0])) {
+      altQty = toNumber(parts[0]);
+      if (parts.length > 1 && /[a-z]/i.test(parts[1])) {
+        const u = normUnit(parts[1]);
+        if (u !== 'count') {
+          altUnit = u;
+          name = normalise(parts.slice(2).join(' '));
+        } else {
+          altUnit = 'count';
+          name = normalise(parts.slice(1).join(' '));
+        }
+      } else {
+        altUnit = 'count';
+        name = normalise(parts.slice(1).join(' '));
+      }
+    }
+
+    return { qty, unit, name, altQty, altUnit, orig:line };
   }
 
   /* B. otherwise treat leading number as count */
-  const m = line.match(/^(\d+)\s+(.+)$/);       // simple count capture
+  const m = line.match(/^([\d¼½¾⅓⅔]+)\s+(.+)$/);
   if (m) {
-    const qty  = parseInt(m[1],10);
+    const qty  = toNumber(m[1]);
     const name = normalise(m[2]);
     return { qty, unit:'count', name, orig:line };
   }
@@ -618,6 +651,7 @@ function parseLine (line) {
 function toGrams(qty,unit){
   if(unit.startsWith('g'))  return qty;
   if(unit.startsWith('oz')) return oz2g(qty);
+  if(unit.startsWith('ml')) return qty;        // assume density ~ water
   if(unit.startsWith('cup'))return cup2g(qty);
   if(unit.startsWith('tbsp'))return qty*15;
   if(unit.startsWith('tsp')) return qty*5;
@@ -638,7 +672,7 @@ function buildShop() {
   }
 
   // 2. Merge & scale quantities
-  const merged = {};  // key → { qty, unit, name }
+  const merged = {};  // key → { qty, unit, name, altQty?, altUnit? }
 
   Object.entries(state.sel).forEach(([idx, selected]) => {
     if (!selected) return;
@@ -651,6 +685,11 @@ function buildShop() {
 
       const key = normalise(p.name);
       if (!merged[key]) merged[key] = { qty: 0, unit: p.unit, name: key };
+
+      if (p.altQty) {
+        merged[key].altQty  = (merged[key].altQty || 0) + p.altQty * factor;
+        merged[key].altUnit = p.altUnit || merged[key].altUnit;
+      }
 
       if (p.unit === 'count') {
         // Round up produce counts
@@ -711,7 +750,8 @@ function buildShop() {
         const w = item.qty >= 454
           ? `${(item.qty/28.3495).toFixed(1)} oz`
           : `${Math.round(item.qty)} g`;
-        label = `${item.name} (${w})`;
+        const prefix = item.altQty ? `${fmtAlt(item.altQty,item.altUnit)} ` : '';
+        label = `${prefix}${item.name} (${w})`;
       }
       const own = state.pantry[label];
       html += `<li data-txt="${label}"${own?' class="pantry"':''}>
