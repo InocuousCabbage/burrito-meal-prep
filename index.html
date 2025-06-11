@@ -654,24 +654,38 @@ function buildShop () {
     'Spices & Seasonings' : /powder|seasoning|packet|salt|cumin|paprika|oregano|pepper(?!\s*(corn|oni))/i
   };
 
-  /* ---------- merge counts & weights ---------- */
+
+
+  /* ─── In buildShop(), replace the merge phase with this ─── */
   const merged = {};      // key -> {qty,unit,name}
 
   Object.keys(state.sel).forEach(idx => {
-    recipes[idx].ingredients.forEach(line => {
+    const selected = state.sel[idx];
+    if (!selected) return;
+    const rec    = recipes[idx];
+    const factor = selected / rec.yield;
+
+    rec.ingredients.forEach(line => {
       const p = parseLine(line);
       if (!p) return;
 
       const key = normalise(p.name);
-      const unit= p.unit;
+      if (!merged[key]) merged[key] = { qty: 0, unit: p.unit, name: key };
 
-      if (!merged[key]) merged[key] = {qty:0,unit,name:key};
+      // scale the parsed quantity by factor
+      const scaledQty = p.qty * factor;
 
-      /* count items just add counts; weight items add grams */
-      merged[key].qty += (unit==='count') ? p.qty : toGrams(p.qty,unit);
-      if (unit==='count') merged[key].unit='count';
+      // for count-units, accumulate counts; otherwise accumulate grams
+      if (p.unit === 'count') {
+        merged[key].qty += scaledQty;
+        merged[key].unit = 'count';
+      } else {
+        merged[key].qty += toGrams(scaledQty, p.unit);
+        merged[key].unit = merged[key].unit === 'count' ? 'count' : p.unit;
+      }
     });
   });
+
 
   /* ---------- bucket by category ---------- */
   const buckets = Object.fromEntries(catOrder.map(c=>[c,[]]));
