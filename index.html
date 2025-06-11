@@ -628,13 +628,23 @@ function parseLine(line) {
     let unit    = vol[2].toLowerCase().replace(/s$/,'');
     const item  = normalise(vol[3]);
     return { qty: qtyRaw, unit, name: item, orig: line };
-  /* A. explicit weight in parentheses? */
-  const w = line.match(/\((\d+(?:\.\d+)?)\s*(g|oz|ml)\)/i);
-  if (w) {
-    const qty  = parseFloat(w[1]);
-    const unit = w[2].toLowerCase();
+  }
 
-    const before = line.slice(0, w.index).trim();
+  // 4) WEIGHT without parentheses: “600 g potatoes”
+  const wt = line.match(/^([\d\.\/¼½¾⅓⅔]+)\s*(g|oz|ml)\s+(.+)$/i);
+  if (wt) {
+    const qty = wt[1].split(/\s+/).map(toNumber).reduce((a,b)=>a+b,0);
+    const unit = wt[2].toLowerCase();
+    const item = normalise(wt[3]);
+    return { qty, unit, name: item, orig: line };
+  }
+
+  /* A. explicit weight in parentheses? */
+  const w2 = line.match(/\((\d+(?:\.\d+)?)\s*(g|oz|ml)\)/i);
+  if (w2) {
+    const qty  = parseFloat(w2[1]);
+    const unit = w2[2].toLowerCase();
+    const before = line.slice(0, w2.index).trim();
     let name  = normalise(before);
     let altQty, altUnit;
 
@@ -691,7 +701,6 @@ function parseLine(line) {
   
   // cannot parse
   return null;
-}
 }
 
 function toGrams(qty,unit){
